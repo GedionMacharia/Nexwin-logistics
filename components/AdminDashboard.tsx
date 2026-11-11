@@ -6,15 +6,137 @@ type Inquiry={id:string;reference:string;name:string;email:string;phone:string;s
 const statuses=["New inquiry","Reviewing","Quotation sent","Awaiting client response","In progress","Completed","Cancelled"];
 export default function AdminDashboard(){
  const [session,setSession]=useState<any>(null),[email,setEmail]=useState(""),[password,setPassword]=useState(""),[items,setItems]=useState<Inquiry[]>([]),[loading,setLoading]=useState(false),[error,setError]=useState(""),[query,setQuery]=useState(""),[selected,setSelected]=useState<Inquiry|null>(null),[detail,setDetail]=useState<any>(null),[note,setNote]=useState("");
+ const [recoveryMode,setRecoveryMode]=useState(false);
+const [newPassword,setNewPassword]=useState("");
+const [recoveryMessage,setRecoveryMessage]=useState("");
  const supabase=supabaseBrowser();
  async function load(s:any){setLoading(true);setError("");try{const r=await fetch("/api/inquiries/list",{headers:{Authorization:`Bearer ${s.access_token}`}});const j=await r.json();if(!r.ok)throw new Error(j.error);setItems(j.inquiries||[]);}catch(e){setError(e instanceof Error?e.message:"Could not load data.");}finally{setLoading(false);}}
- useEffect(()=>{supabase.auth.getSession().then(({data})=>{if(data.session){setSession(data.session);load(data.session);}});const {data:{subscription}}=supabase.auth.onAuthStateChange((_event,s)=>{setSession(s);if(s)load(s);else setItems([])});return()=>subscription.unsubscribe();},[]);
+
+ useEffect(()=>{
+  supabase.auth.getSession().then(({data})=>{
+    if(data.session){
+      setSession(data.session);
+      load(data.session);
+    }
+  });
+
+  const {data:{subscription}}=supabase.auth.onAuthStateChange((event,s)=>{
+    setSession(s);
+
+    if(event==="PASSWORD_RECOVERY"){
+      setRecoveryMode(true);
+      setRecoveryMessage("");
+    }
+
+    if(s) load(s);
+    else setItems([]);
+  });
+
+  return ()=>subscription.unsubscribe();
+ },[]);
+
+ async function updatePassword(e:React.FormEvent){
+  e.preventDefault();
+  setError("");
+  setRecoveryMessage("");
+
+  if(newPassword.length < 8){
+    setError("Password must be at least 8 characters.");
+    return;
+  }
+
+  const {error}=await supabase.auth.updateUser({
+    password:newPassword
+  });
+
+  if(error){
+    setError(error.message);
+    return;
+  }
+
+  setRecoveryMode(false);
+  setNewPassword("");
+  setRecoveryMessage("Your administrator password has been updated successfully.");
+ }
+
+ async function sendPasswordReset(){
+  setError("");
+  setRecoveryMessage("");
+
+  if(!email){
+    setError("Enter your administrator email first.");
+    return;
+  }
+
+  const {error}=await supabase.auth.resetPasswordForEmail(email,{
+    redirectTo:"https://nexwin-logistics-2x69k1n2o-nexwin.vercel.app/admin"
+  });
+
+  if(error){
+    setError(error.message);
+  }else{
+    setRecoveryMessage("Password reset link sent. Check your email.");
+  }
+ }
+
  async function login(e:React.FormEvent){e.preventDefault();setError("");const {data,error}=await supabase.auth.signInWithPassword({email,password});if(error){setError(error.message);return;}if(data.session){setSession(data.session);load(data.session);}}
  async function openItem(x:Inquiry){setSelected(x);setDetail(null);const r=await fetch(`/api/inquiries/${x.id}`,{headers:{Authorization:`Bearer ${session.access_token}`}});const j=await r.json();if(r.ok){setDetail(j.inquiry);setNote(j.inquiry.admin_notes||"");}}
  async function update(id:string,status:string){const r=await fetch(`/api/inquiries/${id}`,{method:"PATCH",headers:{"Content-Type":"application/json",Authorization:`Bearer ${session.access_token}`},body:JSON.stringify({status,admin_notes:note})});if(!r.ok){setError("Could not update this inquiry.");return;}await load(session);if(selected)setSelected({...selected,status});}
  const filtered=items.filter(x=>[x.name,x.email,x.reference,x.service,x.title,x.status].join(" ").toLowerCase().includes(query.toLowerCase()));
  function csv(){const cols=["reference","name","email","phone","service","title","status","created_at"];const rows=[cols.join(","),...filtered.map(x=>cols.map(k=>`"${String((x as any)[k]??"").replace(/"/g,'""')}"`).join(","))];const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([rows.join("\n")],{type:"text/csv"}));a.download="nexwin-inquiries.csv";a.click();URL.revokeObjectURL(a.href);}
- if(!session)return <div className="admin-shell"><div className="admin-top"><div className="container"><div className="brand" style={{color:"white"}}><span className="brand-mark">N</span>NEXWIN LOGISTICS <span style={{fontSize:11,color:"#d9ae58",fontWeight:500}}>ADMIN</span></div></div></div><div className="container" style={{maxWidth:440,paddingTop:80}}><div className="form-card"><h1 style={{color:"#0B1730",fontSize:28}}>Administrator sign in</h1><p style={{color:"#697589",fontSize:13}}>Use the authorized administrator account configured in Supabase.</p><form onSubmit={login} style={{display:"grid",gap:15}}><div className="field"><label>Email</label><input type="email" value={email} onChange={e=>setEmail(e.target.value)} required/></div><div className="field"><label>Password</label><input type="password" value={password} onChange={e=>setPassword(e.target.value)} required/></div>{error&&<div className="error">{error}</div>}<button className="btn btn-gold">Sign in securely</button></form></div></div></div>;
+ if(recoveryMode) return (
+  <div className="admin-shell">
+   <div className="admin-top">
+    <div className="container">
+     <div className="brand" style={{color:"white"}}>
+      <span className="brand-mark">N</span>
+      NEXWIN LOGISTICS
+      <span style={{fontSize:11,color:"#d9ae58",fontWeight:500}}>ADMIN</span>
+     </div>
+    </div>
+   </div>
+
+   <div className="container" style={{maxWidth:440,paddingTop:80}}>
+    <div className="form-card">
+     <h1 style={{color:"#0B1730",fontSize:28}}>Set a new password</h1>
+     <p style={{color:"#697589",fontSize:13}}>
+      Choose a new password for your administrator account.
+     </p>
+
+     <form onSubmit={updatePassword} style={{display:"grid",gap:15}}>
+      <div className="field">
+       <label>New password</label>
+       <input
+        type="password"
+        value={newPassword}
+        onChange={e=>setNewPassword(e.target.value)}
+        minLength={8}
+        required
+       />
+      </div>
+
+      {error&&<div className="error">{error}</div>}
+      {recoveryMessage&&<p>{recoveryMessage}</p>}
+
+      <button className="btn btn-gold">Update password</button>
+     </form>
+    </div>
+   </div>
+  </div>
+ );
+
+ if(!session)return <div className="admin-shell"><div className="admin-top"><div className="container"><div className="brand" style={{color:"white"}}><span className="brand-mark">N</span>NEXWIN LOGISTICS <span style={{fontSize:11,color:"#d9ae58",fontWeight:500}}>ADMIN</span></div></div></div><div className="container" style={{maxWidth:440,paddingTop:80}}><div className="form-card"><h1 style={{color:"#0B1730",fontSize:28}}>Administrator sign in</h1><p style={{color:"#697589",fontSize:13}}>Use the authorized administrator account configured in Supabase.</p><form onSubmit={login} style={{display:"grid",gap:15}}><div className="field"><label>Email</label><input type="email" value={email} onChange={e=>setEmail(e.target.value)} required/></div><div className="field"><label>Password</label><input type="password" value={password} onChange={e=>setPassword(e.target.value)} required/></div>{error&&<div className="error">{error}</div>}
+<button className="btn btn-gold">Sign in securely</button>
+<button
+  type="button"
+  className="text-link"
+  onClick={sendPasswordReset}
+>
+  Forgot password?
+</button>
+{recoveryMessage&&<p>{recoveryMessage}</p>}
+</form>
+</div></div></div>;
  return <div className="admin-shell"><div className="admin-top"><div className="container" style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div className="brand" style={{color:"white"}}><span className="brand-mark">N</span>NEXWIN LOGISTICS <span style={{fontSize:11,color:"#d9ae58",fontWeight:500}}>ADMIN</span></div><button className="btn btn-outline" onClick={()=>supabase.auth.signOut()}><LogOut size={15}/> Sign out</button></div></div><main className="container admin-content"><div style={{display:"flex",justifyContent:"space-between",gap:15,alignItems:"center",flexWrap:"wrap"}}><div><span className="eyebrow">OVERVIEW</span><h1 style={{fontSize:32,color:"#0B1730",margin:"9px 0"}}>Client inquiries</h1><p style={{color:"#697589",fontSize:13}}>Review requests, follow up and manage inquiry statuses.</p></div><div style={{display:"flex",gap:9}}><button className="btn btn-dark" onClick={()=>load(session)}><RefreshCw size={15}/> Refresh</button><button className="btn btn-gold" onClick={csv}><FileDown size={15}/> Export CSV</button></div></div>
  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:13,margin:"25px 0"}}>{[["Total inquiries",items.length],["New",items.filter(x=>x.status==="New inquiry").length],["In progress",items.filter(x=>x.status==="In progress").length],["Completed",items.filter(x=>x.status==="Completed").length]].map(([t,n])=><div className="form-card" style={{padding:20}} key={t as string}><small style={{color:"#697589"}}>{t as string}</small><div style={{fontSize:30,fontWeight:800,color:"#0B1730",marginTop:5}}>{n as number}</div></div>)}</div>
  <div style={{display:"flex",gap:12,marginBottom:15,alignItems:"center"}}><div className="field" style={{flex:1,position:"relative"}}><Search size={16} style={{position:"absolute",left:12,top:12,color:"#8792a3"}}/><input style={{paddingLeft:37}} placeholder="Search name, reference, service or status..." value={query} onChange={e=>setQuery(e.target.value)}/></div></div>
